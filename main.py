@@ -1,13 +1,18 @@
-import binascii
 import datetime
-import inspect
-import math
-import random
+import time
+import midi2audio
 import python3_midi as midi
 import numpy as np
-import pandas as pd
 from midi2audio import FluidSynth
 import ccxt
+# import fluidsynth
+from mingus.midi import fluidsynth as a
+from mingus.midi import midi_track
+from mingus.containers import note_container, note
+import matplotlib.pyplot as plt
+from matplotlib import animation
+import random
+import moviepy.editor as mpe
 
 eot = midi.EndOfTrackEvent(tick=1)
 VOLUME = 200
@@ -69,14 +74,21 @@ def single_track(pitches):
     return track
 
 
-def single_track_variable_volume(pitches, volume_data):
+def single_track_variable_volume(pitches, volume_data, channel, tick):
     track = midi.Track()
     for i in range(len(pitches)):
-        on_note = midi.NoteOnEvent(tick=0, channel=0, pitch=pitches[i], velocity=volume_data[i])
-        off_note = midi.NoteOffEvent(tick=120, channel=0, pitch=pitches[i])
+        on_note = midi.NoteOnEvent(tick=0, channel=channel, pitch=pitches[i], velocity=volume_data[i])
+        off_note = midi.NoteOffEvent(tick=tick, channel=channel, pitch=pitches[i])
         track.append(on_note)
         track.append(off_note)
     return track
+
+
+def single_track_variable_volume_alt(pitches, volume_data):
+    container = note_container.NoteContainer()
+    for i in range(len(pitches)):
+        container.add_note(note=note.Note().from_int(pitches[i]-12))
+    return container
 
 
 def get_scale(start_pitch, end_pitch, tonality):
@@ -131,37 +143,139 @@ def test_sound():
     fs('fonts/GuitarA.sf2').play_midi(filename)
 
 
+def visualize_data(pitches_list, labels, colors, interval, filename):
+    track_number = len(pitches_list)
+    if track_number == 0:
+        return
+
+    x = np.arange(len(pitches_list[0]))
+    y = pitches_list
+
+    fig, ax = plt.subplots()
+    plt.xlabel("Index")
+    plt.ylabel("Pitches")
+    plt.title("Visualization")
+
+    ax.axis([0, len(x), min_pitch, max_pitch])
+
+    lines = [ax.plot(x, y[i], color=colors[i], label=labels[i])[0] for i in range(track_number)]
+
+    def update(num, x, y, lines):
+        for i in range(len(lines)):
+            lines[i].set_data(x[:num], y[i][:num])
+        return lines
+
+    plt.legend(loc='upper left')
+    ani = animation.FuncAnimation(fig, update, len(x), fargs=[x, y, lines], interval=interval)
+    fps = 1000 / interval
+    writer = animation.writers['ffmpeg'](fps=4, metadata=dict(artist="Me"), bitrate=-1)
+    ani.save(filename, writer=writer)
+    plt.show()
+
+
+def get_data(pairs, timeframe, start, limit):
+    return [parse_rates_data(pairs[i], timeframe, start, limit) for i in range(len(pairs))]
+
+
+def get_pattern(data, min_pitch, max_pitch, tonality, min_velocity, max_velocity, tick):
+    data_len = len(data)
+    pitches_list = [data_to_pitches_in_scale(data[i][4], min_pitch, max_pitch, tonality) for i in range(data_len)]
+    velocity_data= [project_data_to_range(data[i][5], min_velocity, max_velocity) for i in range(data_len)]
+
+    pattern = midi.Pattern(single_track_variable_volume(pitches_list[i], velocity_data[i], 1, tick) for i in range(data_len))
+    return pattern, pitches_list
+
+
 if __name__ == '__main__':
     # test_sound()
 
     # Parameters for making pattern
-    filename, max_notes, tracks, min_pitch, pitch_range = "output/sin_triple.mid", 70, 1, 50, 30
+    # filename, max_notes, tracks, min_pitch, pitch_range = "output/result.mid", 70, 1, 50, 30
+    filename = "output/result.mid"
 
-    pair = 'BTC/USDT'
     timeframe = '1h'
     start = "2022-01-24 11:20:00+00:00"
-    limit = 100
-    data = parse_rates_data(pair, timeframe, start, limit)
+    limit = 50
+    pairs = [
+        'BTC/USDT',
+        # 'ETH/USDT',
+        # 'SOL/USDT',
+    ]
+    data = get_data(pairs, timeframe, start, limit)
+
     min_pitch, max_pitch = 31, 103
-    pitches = data_to_pitches_in_scale(data[4], min_pitch, max_pitch, "DUR")
-    # print(f"Minimum : {np.min(pitches)}")
-    # print(f"Maximum : {np.max(pitches)}")
+    min_velocity, max_velocity = 50, 127
+    tonality = "DUR"
+    tick = 100
+    pattern, pitches_list = get_pattern(data, min_pitch, max_pitch, tonality, min_velocity, max_velocity, tick)
 
     # Write the MIDI
-    # pattern = make_pattern(max_notes, len(data), min_pitch, pitch_range, data)
-    # if pattern == -1:
-    #     exit(-1)
-    # midi.write_midifile(filename, pattern)
-
-    min_velocity, max_velocity = 100, 255
-    velocity_data = project_data_to_range(data[5], min_velocity, max_velocity)
-
-    pattern = midi.Pattern()
-    pattern.append(single_track_variable_volume(pitches, velocity_data))
     if pattern == -1:
         exit(-1)
     midi.write_midifile(filename, pattern)
 
+    r = lambda: random.randint(0,255)
+    colors = [f'#{r():02x}{r():02x}{r():02x}' for i in range(len(pairs))]
+    # colors = ['red','green','blue', 'orange', 'blueviolet', 'magenta', 'lime']
+
+    output_video_file = 'output/test.mp4'
+    visualize_data(pitches_list, pairs, colors, tick, output_video_file)
+
+    my_clip = mpe.VideoFileClip(output_video_file)
+
+    output_audio_file = 'output/test.mp3'
+    midi2audio.FluidSynth('fonts/FluidR3_GM.sf2').midi_to_audio(filename, output_audio_file)
+
+    audio = mpe.AudioFileClip(output_audio_file)
+    video1 = mpe.VideoFileClip(output_video_file)
+
+    final = video1.set_audio(audio)
+    final.write_videofile(output_video_file,codec= 'mpeg4' ,audio_codec='libvorbis')
+
+    # plt.plot(np.arange(len(pitches_1)), pitches_1, color='r', label=pair_1)
+    # plt.plot(np.arange(len(pitches_2)), pitches_2, color='g', label=pair_2)
+    # plt.plot(np.arange(len(pitches_3)), pitches_3, color='b', label=pair_3)
+    # plt.xlabel("Index")
+    # plt.ylabel("Pitches")
+    # plt.title("Visualization")
+    # plt.legend()
+    # plt.show()
+
     # Play the MIDI
-    fs = FluidSynth
-    fs('fonts/GuitarA.sf2').play_midi(filename)
+    # fs = FluidSynth
+    # fs('fonts/FluidR3_GM.sf2').play_midi(filename)
+
+    # fs = fluidsynth.Synth()
+    # fluidsynth.Synth().
+    # fs.start()
+    #
+    # sfid = fs.sfload('fonts/FluidR3_GM.sf2')
+    # fs.program_select(0, sfid, 0, 0)
+    #
+    # fs.noteon(0, 60, 30)
+    # fs.noteon(0, 67, 30)
+    # fs.noteon(0, 76, 30)
+    #
+    # time.sleep(1.0)
+    #
+    # fs.noteoff(0, 60)
+    # fs.noteoff(0, 67)
+    # fs.noteoff(0, 76)
+    #
+    # time.sleep(1.0)
+    #
+    # fs.delete()
+
+    # a.init('fonts/FluidR3_GM.sf2',"dsound")
+    # a.set_instrument(0, 34)
+    # a.set_instrument(1, 35)
+    #
+    # note_container = single_track_variable_volume_alt(pitches_1, velocity_data_1)
+    # track = midi_track.MidiTrack()
+    # track.play_NoteContainer(note_container)
+    # a.play_Track(track)
+    #
+    # a.play_Note(26, 0, 255)
+    # a.sleep(0.5)
+    # a.play_Note(26, 1, 255)
+    # a.sleep(0.5)
