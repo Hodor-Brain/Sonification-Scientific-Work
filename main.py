@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 from matplotlib import animation
 import random
 import moviepy.editor as mpe
-import matplotlib.dates as mdates
 
 eot = midi.EndOfTrackEvent(tick=1)
 VOLUME = 200
