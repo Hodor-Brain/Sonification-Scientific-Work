@@ -1,18 +1,14 @@
 import datetime
-import time
-import midi2audio
 import python3_midi as midi
 import numpy as np
 from midi2audio import FluidSynth
 import ccxt
-# import fluidsynth
-from mingus.midi import fluidsynth as a
-from mingus.midi import midi_track
-from mingus.containers import note_container, note
+import sf2_loader as sf
 import matplotlib.pyplot as plt
 from matplotlib import animation
 import random
 import moviepy.editor as mpe
+import matplotlib.dates as mdates
 
 eot = midi.EndOfTrackEvent(tick=1)
 VOLUME = 200
@@ -39,10 +35,10 @@ def parse_rates_data(pair, timeframe, start, limit):
     return data
 
 
-def project_data_to_range(data, min_pitch, max_pitch):
+def project_data_to_range(data, start, end):
     maximum, minimum = np.max(data), np.min(data)
-    step = (maximum - minimum) / (max_pitch - min_pitch)
-    shift = minimum // step - min_pitch
+    step = (maximum - minimum) / (end - start)
+    shift = minimum // step - start
 
     pitches = []
     for i in data:
@@ -82,13 +78,6 @@ def single_track_variable_volume(pitches, volume_data, channel, tick):
         track.append(on_note)
         track.append(off_note)
     return track
-
-
-def single_track_variable_volume_alt(pitches, volume_data):
-    container = note_container.NoteContainer()
-    for i in range(len(pitches)):
-        container.add_note(note=note.Note().from_int(pitches[i]-12))
-    return container
 
 
 def get_scale(start_pitch, end_pitch, tonality):
@@ -143,7 +132,23 @@ def test_sound():
     fs('fonts/GuitarA.sf2').play_midi(filename)
 
 
-def visualize_data(pitches_list, labels, colors, interval, filename):
+def animate(fig, axs, x, y, lines, areas, interval):
+    def update(num, x, y, lines, new_volumes):
+        for i in range(len(lines)):
+            lines[i].set_data(x[:num + 1], y[i][:num + 1])
+            axs[i].scatter(x[num], y[i][num], s=new_volumes[i][num], c=colors[i])
+        return lines
+
+    return animation.FuncAnimation(fig, update, frames=len(x), fargs=[x, y, lines, areas], interval=interval)
+
+
+def write_video(ani, interval, filename):
+    fps = 1000 / (interval * 5)
+    writer = animation.writers['ffmpeg'](fps=fps)
+    ani.save(filename, writer=writer)
+
+
+def visualize_pitches(pitches_list, volumes_list, labels, colors, interval, filename):
     track_number = len(pitches_list)
     if track_number == 0:
         return
@@ -158,48 +163,78 @@ def visualize_data(pitches_list, labels, colors, interval, filename):
 
     ax.axis([0, len(x), min_pitch, max_pitch])
 
-    lines = [ax.plot(x, y[i], color=colors[i], label=labels[i])[0] for i in range(track_number)]
-
-    def update(num, x, y, lines):
-        for i in range(len(lines)):
-            lines[i].set_data(x[:num], y[i][:num])
-        return lines
-
+    lines = [ax.plot([], [], color=colors[i], label=labels[i])[0] for i in range(track_number)]
+    new_volumes = [project_data_to_range(volumes_list[i], 2, 20) for i in range(track_number)]
+    for i in range(track_number):
+        ax.scatter(x[0], y[i][0], s=new_volumes[i][0], c=colors[i])
     plt.legend(loc='upper left')
-    ani = animation.FuncAnimation(fig, update, len(x), fargs=[x, y, lines], interval=interval)
-    fps = 1000 / interval
-    writer = animation.writers['ffmpeg'](fps=4, metadata=dict(artist="Me"), bitrate=-1)
-    ani.save(filename, writer=writer)
-    plt.show()
+
+    ani = animate(fig, [ax], x, y, lines, new_volumes, interval)
+    write_video(ani, interval, filename)
+
+
+def visualize_data_separately(data_list, labels, colors, interval, filename):
+    track_number = len(pitches_list)
+    if track_number == 0:
+        return
+
+    length = len(data_list[0][0])
+    # x = [datetime.datetime.fromtimestamp(data_list[0][0, i] / 1000)for i in range(length)]
+    x = np.arange(length)
+    y = [data_list[i][4] for i in range(track_number)]
+
+    fig, axs = plt.subplots(track_number, layout="constrained")
+
+    for i in range(track_number):
+        axs[i].set(xlabel="Index", ylabel="Price", title=labels[i])
+        axs[i].axis([0, len(x), np.min(data_list[i][4]), np.max(data_list[i][4])])
+
+    lines = [axs[i].plot([], [], color=colors[i], label=labels[i])[0] for i in range(track_number)]
+    areas = [project_data_to_range(data_list[i][5], 2, 20) for i in range(track_number)]
+    for i in range(track_number):
+        axs[i].scatter(x[0], y[i][0], s=areas[i][0], c=colors[i])
+
+    ani = animate(fig, axs, x, y, lines, areas, interval)
+    write_video(ani, interval, filename)
+
+
+def create_final_video(audio_file, video_file, final_file):
+    audio = mpe.AudioFileClip(audio_file)
+    video = mpe.VideoFileClip(video_file)
+
+    final = video.set_audio(audio)
+    final.write_videofile(final_file, codec='mpeg4', audio_codec='libvorbis')
 
 
 def get_data(pairs, timeframe, start, limit):
     return [parse_rates_data(pairs[i], timeframe, start, limit) for i in range(len(pairs))]
 
 
-def get_pattern(data, min_pitch, max_pitch, tonality, min_velocity, max_velocity, tick):
+def get_pattern(data, min_pitch, max_pitch, tonality, min_velocity, max_velocity, tick, resolution):
     data_len = len(data)
     pitches_list = [data_to_pitches_in_scale(data[i][4], min_pitch, max_pitch, tonality) for i in range(data_len)]
-    velocity_data= [project_data_to_range(data[i][5], min_velocity, max_velocity) for i in range(data_len)]
+    velocity_data = [project_data_to_range(data[i][5], min_velocity, max_velocity) for i in range(data_len)]
 
-    pattern = midi.Pattern(single_track_variable_volume(pitches_list[i], velocity_data[i], 1, tick) for i in range(data_len))
-    return pattern, pitches_list
+    pattern = midi.Pattern(
+        (single_track_variable_volume(pitches_list[i], velocity_data[i], 1, tick) for i in range(data_len)),
+        resolution,
+    )
+    return pattern, pitches_list, velocity_data
 
 
 if __name__ == '__main__':
     # test_sound()
 
     # Parameters for making pattern
-    # filename, max_notes, tracks, min_pitch, pitch_range = "output/result.mid", 70, 1, 50, 30
     filename = "output/result.mid"
 
     timeframe = '1h'
     start = "2022-01-24 11:20:00+00:00"
-    limit = 50
+    limit = 100
     pairs = [
         'BTC/USDT',
-        # 'ETH/USDT',
-        # 'SOL/USDT',
+        'ETH/USDT',
+        'SOL/USDT',
     ]
     data = get_data(pairs, timeframe, start, limit)
 
@@ -207,75 +242,27 @@ if __name__ == '__main__':
     min_velocity, max_velocity = 50, 127
     tonality = "DUR"
     tick = 100
-    pattern, pitches_list = get_pattern(data, min_pitch, max_pitch, tonality, min_velocity, max_velocity, tick)
+    resolution = 100
+    pattern, pitches_list, velocity_data = get_pattern(data, min_pitch, max_pitch, tonality, min_velocity, max_velocity,
+                                                       tick, resolution)
 
     # Write the MIDI
     if pattern == -1:
         exit(-1)
     midi.write_midifile(filename, pattern)
 
-    r = lambda: random.randint(0,255)
-    colors = [f'#{r():02x}{r():02x}{r():02x}' for i in range(len(pairs))]
-    # colors = ['red','green','blue', 'orange', 'blueviolet', 'magenta', 'lime']
+    r = lambda: random.randint(0, 255)
+    # colors = [f'#{r():02x}{r():02x}{r():02x}' for i in range(len(pairs))]
+    colors = ['red','green','blue', 'orange', 'blueviolet', 'magenta', 'lime']
 
     output_video_file = 'output/test.mp4'
-    visualize_data(pitches_list, pairs, colors, tick, output_video_file)
+    # visualize_data(pitches_list, velocity_data, pairs, colors, tick, output_video_file)
+    visualize_data_separately(data, pairs, colors, tick, output_video_file)
 
-    my_clip = mpe.VideoFileClip(output_video_file)
+    audio_file = 'output/result.mp3'
+    loader = sf.sf2_loader('fonts/SonificationFonts.sf2')
+    # loader.play_midi_file(current_chord='output/result.mid', instruments=[1, 72])
+    loader.export_midi_file(filename, name=audio_file, format='mp3', instruments=[1, 67, 25])
 
-    output_audio_file = 'output/test.mp3'
-    midi2audio.FluidSynth('fonts/FluidR3_GM.sf2').midi_to_audio(filename, output_audio_file)
-
-    audio = mpe.AudioFileClip(output_audio_file)
-    video1 = mpe.VideoFileClip(output_video_file)
-
-    final = video1.set_audio(audio)
-    final.write_videofile(output_video_file,codec= 'mpeg4' ,audio_codec='libvorbis')
-
-    # plt.plot(np.arange(len(pitches_1)), pitches_1, color='r', label=pair_1)
-    # plt.plot(np.arange(len(pitches_2)), pitches_2, color='g', label=pair_2)
-    # plt.plot(np.arange(len(pitches_3)), pitches_3, color='b', label=pair_3)
-    # plt.xlabel("Index")
-    # plt.ylabel("Pitches")
-    # plt.title("Visualization")
-    # plt.legend()
-    # plt.show()
-
-    # Play the MIDI
-    # fs = FluidSynth
-    # fs('fonts/FluidR3_GM.sf2').play_midi(filename)
-
-    # fs = fluidsynth.Synth()
-    # fluidsynth.Synth().
-    # fs.start()
-    #
-    # sfid = fs.sfload('fonts/FluidR3_GM.sf2')
-    # fs.program_select(0, sfid, 0, 0)
-    #
-    # fs.noteon(0, 60, 30)
-    # fs.noteon(0, 67, 30)
-    # fs.noteon(0, 76, 30)
-    #
-    # time.sleep(1.0)
-    #
-    # fs.noteoff(0, 60)
-    # fs.noteoff(0, 67)
-    # fs.noteoff(0, 76)
-    #
-    # time.sleep(1.0)
-    #
-    # fs.delete()
-
-    # a.init('fonts/FluidR3_GM.sf2',"dsound")
-    # a.set_instrument(0, 34)
-    # a.set_instrument(1, 35)
-    #
-    # note_container = single_track_variable_volume_alt(pitches_1, velocity_data_1)
-    # track = midi_track.MidiTrack()
-    # track.play_NoteContainer(note_container)
-    # a.play_Track(track)
-    #
-    # a.play_Note(26, 0, 255)
-    # a.sleep(0.5)
-    # a.play_Note(26, 1, 255)
-    # a.sleep(0.5)
+    final = 'output/final.mp4'
+    create_final_video(audio_file, output_video_file, final)
