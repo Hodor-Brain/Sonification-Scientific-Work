@@ -172,7 +172,7 @@ def visualize_pitches(pitches_list, volumes_list, labels, colors, interval, file
     write_video(ani, interval, filename)
 
 
-def visualize_data_separately(data_list, labels, colors, interval, filename):
+def visualize_data_separately(data_list, labels, colors, interval, filename, names):
     track_number = len(pitches_list)
     if track_number == 0:
         return
@@ -185,8 +185,10 @@ def visualize_data_separately(data_list, labels, colors, interval, filename):
     fig, axs = plt.subplots(track_number, layout="constrained")
 
     for i in range(track_number):
-        axs[i].set(xlabel="Index", ylabel="Price", title=labels[i])
-        axs[i].axis([0, len(x), np.min(data_list[i][4]), np.max(data_list[i][4])])
+        axs[i].set(ylabel="Price", title=(labels[i] + ' — ' + names[i]))
+        data_min, data_max = np.min(data_list[i][4]), np.max(data_list[i][4])
+        padding = (data_max - data_min) * 0.05
+        axs[i].axis([0, len(x), data_min - padding, data_max + padding])
 
     lines = [axs[i].plot([], [], color=colors[i], label=labels[i])[0] for i in range(track_number)]
     areas = [project_data_to_range(data_list[i][5], 2, 20) for i in range(track_number)]
@@ -228,8 +230,8 @@ if __name__ == '__main__':
     filename = "output/result.mid"
 
     timeframe = '1h'
-    start = "2022-01-24 11:20:00+00:00"
-    limit = 10
+    start = "2023-01-24 11:20:00+00:00"
+    limit = 30
     pairs = [
         'BTC/USDT',
         'ETH/USDT',
@@ -237,9 +239,9 @@ if __name__ == '__main__':
     ]
     data = get_data(pairs, timeframe, start, limit)
 
-    min_pitch, max_pitch = 31, 103
-    min_velocity, max_velocity = 50, 127
-    tonality = "DUR"
+    min_pitch, max_pitch = 31, 91
+    min_velocity, max_velocity = 80, 127
+    tonality = "MOLL"
     tick = 100
     resolution = 100
     pattern, pitches_list, velocity_data = get_pattern(data, min_pitch, max_pitch, tonality, min_velocity, max_velocity,
@@ -254,15 +256,24 @@ if __name__ == '__main__':
     # colors = [f'#{r():02x}{r():02x}{r():02x}' for i in range(len(pairs))]
     colors = ['red', 'green', 'blue', 'orange', 'blueviolet', 'magenta', 'lime']
 
-    output_video_file = 'output/test.mp4'
+    loader = sf.sf2_loader('fonts/SonificationFonts.sf2')
+    # [41, 47, 74] - Violin, Harp and Flute
+    # [41, 72, 13] - Violin, clarinet and marimba
+    instruments = [41, 72, 13]
+    instruments_names = []
+    # print(loader.all_instruments())
+    for i in instruments:
+        # instruments_names.append(all_instruments.get(0).get(i - 1))
+        instruments_names.append(loader.get_instrument_name(1, 0, i - 1))
+
+    output_video_file = 'output/result.mp4'
     # visualize_data(pitches_list, velocity_data, pairs, colors, tick, output_video_file)
-    visualize_data_separately(data, pairs, colors, tick, output_video_file)
+    visualize_data_separately(data, pairs, colors, tick, output_video_file, instruments_names)
 
     audio_file = 'output/result'
-    ext = 'wav'
-    loader = sf.sf2_loader('fonts/SonificationFonts.sf2')
+    ext = 'mp3'
     # loader.play_midi_file(current_chord='output/result.mid', instruments=[1, 72])
-    loader.export_midi_file(filename, name=audio_file + '.' + ext, format=ext, instruments=[1, 67, 25])
+    loader.export_midi_file(filename, name=audio_file + '.' + ext, format=ext, instruments=instruments)
 
     final = 'output/final.mp4'
     create_final_video(audio_file + '.' + ext, output_video_file, final)
