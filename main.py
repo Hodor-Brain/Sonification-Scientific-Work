@@ -229,7 +229,7 @@ if __name__ == '__main__':
 
     timeframe = '1h'
     start = "2022-01-24 11:20:00+00:00"
-    limit = 100
+    limit = 10
     pairs = [
         'BTC/USDT',
         'ETH/USDT',
@@ -252,16 +252,17 @@ if __name__ == '__main__':
 
     r = lambda: random.randint(0, 255)
     # colors = [f'#{r():02x}{r():02x}{r():02x}' for i in range(len(pairs))]
-    colors = ['red','green','blue', 'orange', 'blueviolet', 'magenta', 'lime']
+    colors = ['red', 'green', 'blue', 'orange', 'blueviolet', 'magenta', 'lime']
 
     output_video_file = 'output/test.mp4'
     # visualize_data(pitches_list, velocity_data, pairs, colors, tick, output_video_file)
     visualize_data_separately(data, pairs, colors, tick, output_video_file)
 
-    audio_file = 'output/result.mp3'
+    audio_file = 'output/result'
+    ext = 'wav'
     loader = sf.sf2_loader('fonts/SonificationFonts.sf2')
     # loader.play_midi_file(current_chord='output/result.mid', instruments=[1, 72])
-    loader.export_midi_file(filename, name=audio_file, format='mp3', instruments=[1, 67, 25])
+    loader.export_midi_file(filename, name=audio_file + '.' + ext, format=ext, instruments=[1, 67, 25])
 
     final = 'output/final.mp4'
-    create_final_video(audio_file, output_video_file, final)
+    create_final_video(audio_file + '.' + ext, output_video_file, final)
