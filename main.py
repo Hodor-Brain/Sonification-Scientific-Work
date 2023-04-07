@@ -1,4 +1,6 @@
 import datetime
+import sys
+
 import python3_midi as midi
 import numpy as np
 from midi2audio import FluidSynth
@@ -226,23 +228,32 @@ def get_pattern(data, min_pitch, max_pitch, mode, min_velocity, max_velocity, ti
     return pattern, pitches_list, velocity_data
 
 
+def parse_params():
+    params = sys.argv
+    start, timeframe, limit = params[1], params[2], int(params[3])
+    pairs = params[4].split()
+    min_pitch, max_pitch, min_velocity, max_velocity, mode = int(params[5]), int(params[6]), int(params[7]), int(params[8]), params[9]
+    return start, timeframe, limit, pairs, min_pitch, max_pitch, min_velocity, max_velocity, mode
+
+
 if __name__ == '__main__':
     # test_sound()
 
     # Parameters for making pattern
-    timeframe = '1d'
-    start = "2023-01-24 00:00:00+00:00"
-    limit = 50
-    pairs = [
-        'BTC/USDT',
-        'ETH/USDT',
-        # 'SOL/USDT',
-    ]
+    start, timeframe, limit, pairs, min_pitch, max_pitch, min_velocity, max_velocity, mode = parse_params()
+    # timeframe = '1d'
+    # start = "2023-01-24 00:00:00+00:00"
+    # limit = 50
+    # pairs = [
+    #     'BTC/USDT',
+    #     'ETH/USDT',
+    #     # 'SOL/USDT',
+    # ]
     data = get_data(pairs, timeframe, start, limit)
 
-    min_pitch, max_pitch = 31, 91
-    min_velocity, max_velocity = 80, 127
-    mode = "DUR"
+    # min_pitch, max_pitch = 31, 91
+    # min_velocity, max_velocity = 80, 127
+    # mode = "DUR"
     tick = 100
     resolution = 100
     pattern, pitches_list, velocity_data = get_pattern(data, min_pitch, max_pitch, mode, min_velocity, max_velocity,
@@ -286,8 +297,6 @@ if __name__ == '__main__':
     ext = 'mp3'
     # loader.play_midi_file(current_chord=filename, instruments=[1, 72])
     loader.export_midi_file(filename, name=audio_file + '.' + ext, format=ext, instruments=instruments)
-
-
 
     final = 'output/video/' + const + '.mp4'
     create_final_video(audio_file + '.' + ext, output_video_file, final)
